@@ -1,0 +1,97 @@
+#!/bin/bash
+# Fill Disk with random data for testing
+
+myname=`basename $0`
+usage() {
+  echo "Usage: $myname [-d dircount] [-f filecount] [-b maxblockcount] [-s blocksize] [-v] [-q] [-h]"
+  exit 0
+}
+
+help() {
+  echo "${myname} - Fill Disk with random data for testing"
+  cat << EOF
+  options:
+    -d <num> : set max number of dirs to create
+    -f <num> : set max number of files to create
+    -b <num> : set max count of blocks per file (gets multiplied by 1024)
+    -s <str> : set dd blocksize like 4M for 4 MBytes
+    -v       : set verbose mode
+    -q       : set quiet mode (writes all output to logfile)
+    -h       : give this help
+
+  defaults: fill_disk -d 50 -f 50 -b 8 -s 1M"
+EOF
+  exit
+}
+
+# set defaults
+dirmax=50
+filemax=50
+blockmax=8
+blocksize=1M
+verbose=0
+quiet=0
+
+# random stream of data
+cdz="cat /dev/zero"
+ose="openssl enc -aes-256-ctr -pass pass:testing123 -iter 3"
+ddcmd="dd iflag=fullblock "
+
+# get options and params
+while getopts ":d:f:b:s:hvq" flag; do
+  case "${flag}" in
+    d) dirmax=${OPTARG};;
+    f) filemax=${OPTARG};;
+    b) blockmax=${OPTARG};;
+    s) blocksize=${OPTARG};;
+    v) verbose=1;;
+    q) quiet=1;;
+    h) help ;;
+    :) echo "Error: -${OPTARG} requires an argument."; usage;;
+    *) echo "Invalid option: ${OPTARG}"; usage;;
+  esac
+done
+if ((verbose)); then
+  echo "Creating $dirmax directories each containing $filemax files with max blockcount of $blockmax and a blocksize of $blocksize"
+  ddcmd+=" status=progress"
+  quiet=0
+fi
+
+if ((quiet)); then
+  logfile="fill_disk.log"
+  touch $logfile
+  exec 1>$logfile
+  exec 2>$logfile
+  logdate=$(date '+%F %T')
+  echo "${logdate}: fill_disk script started in quiet mode."
+  echo "Creating $dirmax directories each containing $filemax files with max blockcount of $blockmax and a blocksize of $blocksize"
+  verbose=0
+fi
+
+for ((d=1; d<=$dirmax; d++)); do
+  testdir="TestDir_${d}"
+  logdate=$(date '+%F %T')
+  echo "${logdate}: creating dir ${testdir}."
+  mkdir -p $testdir
+  for ((f=1; f<=$filemax;f++)); do
+    bc=$(( ((f%blockmax)+1)*4096 ))
+    testfile="${testdir}/TestFile_${f}.dat"
+    if [ -f $testfile ]; then
+      if ((verbose)); then
+        echo "Skipping file: ${testfile} as it already exists."
+      fi
+    else
+      logdate=$(date '+%F %T')
+      echo "${logdate}: writing testfile: $testfile with $bc blocks of $blocksize"
+      $cdz | $ose | $ddcmd bs=$blocksize count=$bc of=$testfile
+      ddstatus=$?
+      if (( $ddstatus )); then
+        logdate=$(date '+%F %T')
+        echo "${logdate}: dd ended with errorcode: $ddstatus"
+        break 2
+      fi
+    fi
+  done  #
+done # d
+logdate=$(date '+%F %T')
+echo "${logdate}: fill_disk run completed."
